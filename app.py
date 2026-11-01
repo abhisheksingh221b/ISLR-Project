@@ -1,7 +1,9 @@
-import json
-import os
+# UN Vote Forecaster - Streamlit dashboard
+# Run with:  streamlit run app.py
 
-import numpy as np
+import json
+from pathlib import Path
+
 import pandas as pd
 import plotly.express as px
 import shap
@@ -10,235 +12,237 @@ from xgboost import XGBClassifier
 
 st.set_page_config(page_title='UN Vote Forecaster', page_icon='🗳️', layout='wide')
 
-# DATA = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'app_data') + os.sep 
-DATA = os.path.dirname(os.path.abspath(__file__)) + os.sep   # data files sit next to app.py# works from any folder
-VOTE_COLORS = {'yes': '#2e7d32', 'abstain': '#f9a825', 'no': '#c62828'}
-TOPIC_NAMES = {'co': 'Colonialism', 'di': 'Arms control and disarmament', 'ec': 'Economic development',
-               'hr': 'Human rights', 'me': 'Palestinian conflict', 'nu': 'Nuclear weapons', 'other': 'No topic label'}
+# The data files can sit next to app.py or inside an "app_data" folder
+FOLDER = Path(__file__).parent
+DATA = FOLDER / 'app_data' if (FOLDER / 'app_data').exists() else FOLDER
 
-# Plain-English names for the model's features
+VOTE_COLORS = {'yes': 'green', 'abstain': 'orange', 'no': 'red'}
+
+# Readable names for the model's inputs (used in the "why" chart)
 NICE_NAMES = {
     'year': 'Year',
-    'importantvote': 'Marked as an important vote',
+    'importantvote': 'Important vote',
     'topic_co': 'Topic: colonialism',
     'topic_di': 'Topic: arms control',
     'topic_ec': 'Topic: economic development',
     'topic_hr': 'Topic: human rights',
     'topic_me': 'Topic: Palestinian conflict',
     'topic_nu': 'Topic: nuclear weapons',
-    'past_yes_rate': 'Share of "yes" votes, last 3 sessions',
-    'past_no_rate': 'Share of "no" votes, last 3 sessions',
-    'past_abstain_rate': 'Share of abstentions, last 3 sessions',
-    'topic_yes_rate': 'Past "yes" share on this topic',
-    'topic_no_rate': 'Past "no" share on this topic',
-    'topic_abstain_rate': 'Past abstain share on this topic',
-    'agree_us': 'Recent agreement with the US',
-    'agree_russia': 'Recent agreement with Russia',
-    'agree_china': 'Recent agreement with China',
-    'agree_india': 'Recent agreement with India',
-    'topic_world_yes_rate': 'How much the world says "yes" on this topic',
-    'similarity': 'How similar the closest past resolution is',
-    'similar_my_vote': 'Its vote on the most similar past resolution',
+    'past_yes_rate': '"Yes" share, last 3 sessions',
+    'past_no_rate': '"No" share, last 3 sessions',
+    'past_abstain_rate': 'Abstain share, last 3 sessions',
+    'topic_yes_rate': '"Yes" share on this topic',
+    'topic_no_rate': '"No" share on this topic',
+    'topic_abstain_rate': 'Abstain share on this topic',
+    'agree_us': 'Agreement with the US',
+    'agree_russia': 'Agreement with Russia',
+    'agree_china': 'Agreement with China',
+    'agree_india': 'Agreement with India',
+    'topic_world_yes_rate': 'World "yes" share on this topic',
+    'similarity': 'Similarity to closest past resolution',
+    'similar_my_vote': 'Its vote on the most similar resolution',
     'similar3_my_vote': 'Its average vote on the 3 most similar',
     'similar_world_yes': 'World "yes" share on the similar resolution',
     'similar_us_vote': 'US vote on the similar resolution',
 }
 
 
-# ---------- load data (cached so it only happens once) ----------
+# ---------------------------------------------------------------
+# Load everything once (Streamlit remembers it between clicks)
+# ---------------------------------------------------------------
 @st.cache_data
 def load_data():
-    blocs = pd.read_csv(DATA + 'blocs.csv')
-    votes = pd.read_parquet(DATA + 'votes.parquet')
-    preds = pd.read_parquet(DATA + 'predictions.parquet')
-    res = pd.read_csv(DATA + 'resolutions.csv')
-    leaderboard = pd.read_csv(DATA + 'leaderboard.csv')
-    confusion = pd.read_csv(DATA + 'confusion.csv', index_col=0)
-    features = json.load(open(DATA + 'features.json'))
-    return blocs, votes, preds, res, leaderboard, confusion, features
+    blocs = pd.read_csv(DATA / 'blocs.csv')
+    votes = pd.read_parquet(DATA / 'votes.parquet')
+    preds = pd.read_parquet(DATA / 'predictions.parquet')
+    resolutions = pd.read_csv(DATA / 'resolutions.csv')
+    leaderboard = pd.read_csv(DATA / 'leaderboard.csv')
+    confusion = pd.read_csv(DATA / 'confusion.csv', index_col=0)
+    with open(DATA / 'features.json') as f:
+        features = json.load(f)
+    return blocs, votes, preds, resolutions, leaderboard, confusion, features
 
 
 @st.cache_resource
 def load_model():
     model = XGBClassifier()
-    model.load_model(DATA + 'xgb_model.json')
+    model.load_model(DATA / 'xgb_model.json')
     explainer = shap.TreeExplainer(model)
-    return model, explainer
+    return explainer
 
 
-blocs, votes, preds, res, leaderboard, confusion, features = load_data()
-
-st.sidebar.title('🗳️ UN Vote Forecaster')
-page = st.sidebar.radio('Go to', ['Voting blocs', 'Compare countries', 'Predict a resolution', 'Model performance'])
-st.sidebar.caption('Data: UN General Assembly votes, 1946–2019 (Voeten et al., via TidyTuesday).')
+blocs, votes, preds, resolutions, leaderboard, confusion, features = load_data()
 
 
-# =================================================================
-if page == 'Voting blocs':
+# ---------------------------------------------------------------
+# Page 1: Voting blocs
+# ---------------------------------------------------------------
+def blocs_page():
     st.title('Voting blocs at the UN')
-    st.write('Countries grouped by how they vote, using PCA and K-Means (3 groups per decade). '
-             'Each bloc is named after well-known countries inside it.')
+    st.write('Countries grouped by how they vote (PCA + K-Means, 3 groups per decade).')
 
-    decade = st.select_slider('Decade', options=sorted(blocs['decade'].unique()), value=1980,
-                              format_func=lambda d: f'{d}s')
+    decade = st.select_slider('Decade', options=sorted(blocs['decade'].unique()), value=1980)
     d = blocs[blocs['decade'] == decade]
 
-    fig = px.choropleth(d.dropna(subset=['iso3']), locations='iso3', color='bloc', hover_name='country',
-                        title=f'Voting blocs in the {decade}s')
-    fig.update_layout(height=480, margin=dict(l=0, r=0, t=40, b=0), legend_title_text='Bloc')
-    st.plotly_chart(fig, width='stretch')
+    world_map = px.choropleth(d, locations='iso3', color='bloc', hover_name='country',
+                              title=f'Voting blocs in the {decade}s')
+    st.plotly_chart(world_map)
 
-    left, right = st.columns([3, 2])
-    with left:
-        fig2 = px.scatter(d, x='x', y='y', color='bloc', hover_name='country',
-                          title='The same countries on the PCA map (close together = vote alike)')
-        fig2.update_layout(height=420, xaxis_title='PCA axis 1', yaxis_title='PCA axis 2')
-        st.plotly_chart(fig2, width='stretch')
-    with right:
-        st.subheader('Who is in each bloc?')
-        for bloc_name, group in d.groupby('bloc'):
-            with st.expander(f'{bloc_name} ({len(group)} countries)'):
-                st.write(', '.join(sorted(group['country'])))
+    pca_map = px.scatter(d, x='x', y='y', color='bloc', hover_name='country',
+                         title='PCA map: countries close together vote alike')
+    st.plotly_chart(pca_map)
+
+    st.subheader('Who is in each bloc?')
+    for bloc_name in d['bloc'].unique():
+        members = sorted(d[d['bloc'] == bloc_name]['country'])
+        with st.expander(f'{bloc_name} ({len(members)} countries)'):
+            st.write(', '.join(members))
 
 
-# =================================================================
-elif page == 'Compare countries':
+# ---------------------------------------------------------------
+# Page 2: Compare countries
+# ---------------------------------------------------------------
+def agreement_by_year(country_a, country_b):
+    """Percent of votes where the two countries voted the same way, for each year."""
+    a = votes[votes['country'] == country_a]
+    b = votes[votes['country'] == country_b]
+    both = a.merge(b, on=['rcid', 'year'], suffixes=('_a', '_b'))
+    both['same'] = both['vote_a'] == both['vote_b']
+    return both.groupby('year')['same'].mean() * 100
+
+
+def compare_page():
     st.title('How often do countries vote the same way?')
     countries = sorted(votes['country'].unique())
     main = st.selectbox('Country', countries, index=countries.index('India'))
-    others = st.multiselect('Compare with', [c for c in countries if c != main],
-                            default=['United States', 'Russia', 'China'])
-    smooth = st.checkbox('Smooth over 3 years', value=True)
+    others = st.multiselect('Compare with', countries, default=['United States', 'Russia', 'China'])
 
-    mine = votes[votes['country'] == main][['rcid', 'year', 'vote']]
-    lines = []
-    for other in others:
-        theirs = votes[votes['country'] == other][['rcid', 'vote']]
-        both = mine.merge(theirs, on='rcid', suffixes=('_a', '_b'))
-        yearly = (both['vote_a'] == both['vote_b']).groupby(both['year']).mean() * 100
-        line = yearly.rolling(3, min_periods=1).mean() if smooth else yearly
-        lines.append(pd.DataFrame({'year': yearly.index, 'agreement': yearly.values,
-                                   'line': line.values, 'with': other}))
-
-    if lines:
-        chart = pd.concat(lines)
-        fig = px.line(chart, x='year', y='line', color='with',
-                      labels={'line': '% same vote', 'year': 'Year', 'with': 'Compared with'},
-                      title=f'{main}: share of votes cast the same way')
-        fig.update_layout(height=480, yaxis_range=[0, 100])
-        st.plotly_chart(fig, width='stretch')
-
-        table = chart.assign(decade=(chart['year'] // 10 * 10).astype(str) + 's')
-        st.subheader('Average by decade (%)')
-        st.dataframe(table.pivot_table(index='with', columns='decade', values='agreement')
-                     .style.format('{:.0f}', na_rep='–'), width='stretch')
-    else:
+    if not others:
         st.info('Pick at least one country to compare with.')
+        return
+
+    rows = []
+    for other in others:
+        yearly = agreement_by_year(main, other)
+        for year, value in yearly.items():
+            rows.append({'year': year, 'with': other, 'agreement': value})
+    table = pd.DataFrame(rows)
+
+    # 3-year average makes the lines smoother
+    table['smoothed'] = table.groupby('with')['agreement'].transform(lambda s: s.rolling(3, min_periods=1).mean())
+
+    chart = px.line(table, x='year', y='smoothed', color='with',
+                    labels={'smoothed': '% same vote (3-year average)'},
+                    title=f'{main}: share of votes cast the same way')
+    st.plotly_chart(chart)
+
+    st.subheader('Average by decade (%)')
+    table['decade'] = table['year'] // 10 * 10
+    st.dataframe(table.pivot_table(index='with', columns='decade', values='agreement').round(0))
 
 
-# =================================================================
-elif page == 'Predict a resolution':
+# ---------------------------------------------------------------
+# Page 3: Predict a resolution
+# ---------------------------------------------------------------
+def predict_page():
     st.title('Predict how countries vote on a resolution')
-    st.write('The model was trained on votes from 1980–2009 and never saw these 2010–2019 votes, '
-             'so you can compare its predictions with what really happened.')
+    st.write('The model learned from 1980-2009 and never saw these 2010-2019 votes.')
 
     year = st.selectbox('Year', sorted(preds['year'].unique(), reverse=True))
-    year_res = res[res['rcid'].isin(preds.loc[preds['year'] == year, 'rcid'])].copy()
-    year_res['label'] = year_res['descr'].fillna(year_res['short']).str.slice(0, 110)
-    # Start on the Cuba embargo vote if it is in this year's list (a nice example of countries changing their vote)
-    options = list(year_res['rcid'])
-    cuba = year_res[year_res['label'].str.contains('embargo', case=False)]
-    start = options.index(cuba['rcid'].iloc[0]) if len(cuba) else 0
-    pick = st.selectbox('Resolution', options, index=start,
-                        format_func=lambda r: year_res.set_index('rcid').loc[r, 'label'])
+    ids_this_year = preds[preds['year'] == year]['rcid'].unique()
+    options = resolutions[resolutions['rcid'].isin(ids_this_year)]
+    titles = dict(zip(options['rcid'], options['descr'].fillna(options['short']).str[:110]))
+    rcid = st.selectbox('Resolution', list(titles), format_func=lambda r: titles[r])
 
-    info = res.set_index('rcid').loc[pick]
-    st.markdown(f"**Resolution:** {info['descr']}")
-    similar = res.set_index('rcid')['descr'].get(info['sim1'], 'none found')
-    topic = TOPIC_NAMES.get(info['main_topic'], info['main_topic'])
-    st.caption(f"Topic: {topic} · Most similar earlier resolution (similarity {info['similarity']:.2f}): {similar}")
+    info = resolutions[resolutions['rcid'] == rcid].iloc[0]
+    st.write('**Resolution:**', info['descr'])
+    st.caption(f"Similarity to the closest earlier resolution: {info['similarity']:.2f}")
 
-    r = preds[preds['rcid'] == pick].copy()
-    accuracy = (r['vote'] == r['predicted']).mean() * 100
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric('Countries voting', len(r))
-    c2.metric('Correct predictions', f'{accuracy:.0f}%')
-    c3.metric('Actual yes / no / abstain',
-              f"{(r['vote'] == 'yes').sum()} / {(r['vote'] == 'no').sum()} / {(r['vote'] == 'abstain').sum()}")
-    c4.metric('Swing countries flagged', int(r['swing_flag'].sum()))
+    r = preds[preds['rcid'] == rcid]
+    col1, col2, col3 = st.columns(3)
+    col1.metric('Countries voting', len(r))
+    col2.metric('Correct predictions', f"{(r['vote'] == r['predicted']).mean():.0%}")
+    col3.metric('Swing countries flagged', int(r['swing_flag'].sum()))
 
-    show = st.radio('Show on the map', ['Predicted vote', 'Actual vote'], horizontal=True)
-    col = 'predicted' if show == 'Predicted vote' else 'vote'
-    fig = px.choropleth(r.dropna(subset=['iso3']), locations='iso3', color=col, hover_name='country',
-                        color_discrete_map=VOTE_COLORS, category_orders={col: ['yes', 'abstain', 'no']})
-    fig.update_layout(height=430, margin=dict(l=0, r=0, t=10, b=0), legend_title_text=show)
-    st.plotly_chart(fig, width='stretch')
+    which = st.radio('Show on the map', ['predicted', 'vote'], horizontal=True,
+                     format_func=lambda c: 'Predicted vote' if c == 'predicted' else 'Actual vote')
+    vote_map = px.choropleth(r, locations='iso3', color=which, hover_name='country',
+                             color_discrete_map=VOTE_COLORS)
+    st.plotly_chart(vote_map)
 
     st.subheader('Swing countries: most likely to change their usual vote')
     swing = r.sort_values('p_change', ascending=False).head(10)
-    st.dataframe(swing[['country', 'vote', 'predicted', 'p_change', 'swing_flag']]
-                 .rename(columns={'vote': 'actual', 'p_change': 'chance of change', 'swing_flag': 'flagged'})
-                 .style.format({'chance of change': '{:.0%}'}),
-                 width='stretch', hide_index=True)
+    swing = swing[['country', 'vote', 'predicted', 'p_change', 'swing_flag']].copy()
+    swing['p_change'] = (swing['p_change'] * 100).round(0)
+    swing.columns = ['Country', 'Actual vote', 'Predicted vote', 'Chance of change (%)', 'Flagged']
+    st.dataframe(swing, hide_index=True)
 
-    with st.expander('All countries'):
-        st.dataframe(r[['country', 'vote', 'predicted', 'p_yes', 'p_abstain', 'p_no', 'p_change']]
-                     .rename(columns={'vote': 'actual'}).sort_values('country')
-                     .style.format({c: '{:.0%}' for c in ['p_yes', 'p_abstain', 'p_no', 'p_change']}),
-                     width='stretch', hide_index=True)
+    explain_one_country(r)
 
+
+def explain_one_country(r):
     st.subheader('Why did the model predict this?')
-    country_list = sorted(r['country'])
-    default = country_list.index('India') if 'India' in country_list else 0
-    who = st.selectbox('Pick a country', country_list, index=default)
+    countries = sorted(r['country'])
+    who = st.selectbox('Pick a country', countries,
+                       index=countries.index('India') if 'India' in countries else 0)
     row = r[r['country'] == who].iloc[0]
+    st.write(f"**{who}** actually voted **{row['vote']}**. The model predicted **{row['predicted']}**.")
 
-    model, explainer = load_model()
-    class_names = ['no', 'abstain', 'yes']
-    k = class_names.index(row['predicted'])
-    values = explainer(row[features].to_frame().T.astype(float)).values[0, :, k]
-    contrib = pd.DataFrame({'feature': [f'{NICE_NAMES.get(f, f)} = {row[f]:.2f}' for f in features],
-                            'value': [row[f] for f in features], 'shap': values})
-    contrib = contrib.reindex(contrib['shap'].abs().sort_values(ascending=False).index).head(8)
-    contrib['direction'] = np.where(contrib['shap'] > 0, f'pushes towards "{row["predicted"]}"',
-                                    f'pushes away from "{row["predicted"]}"')
+    # SHAP: how much each input pushed the prediction towards the predicted vote
+    explainer = load_model()
+    inputs = row[features].to_frame().T.astype(float)
+    class_number = ['no', 'abstain', 'yes'].index(row['predicted'])
+    shap_values = explainer(inputs).values[0, :, class_number]
 
-    st.write(f"**{who}** actually voted **{row['vote']}**. The model predicted **{row['predicted']}** "
-             f"(yes {row['p_yes']:.0%}, abstain {row['p_abstain']:.0%}, no {row['p_no']:.0%}).")
-    fig = px.bar(contrib.iloc[::-1], x='shap', y='feature', color='direction', orientation='h',
-                 hover_data={'value': ':.2f'},
-                 color_discrete_sequence=['#1565c0', '#ef6c00'],
-                 labels={'shap': 'SHAP contribution', 'feature': ''})
-    fig.update_layout(height=380, legend_title_text='')
-    st.plotly_chart(fig, width='stretch')
-    st.caption('Votes are coded yes = 1, abstain = 0.5, no = 0. Hover over a bar to see the feature value.')
+    why = pd.DataFrame({'input': [NICE_NAMES[f] for f in features], 'effect': shap_values})
+    why = why.reindex(why['effect'].abs().sort_values().index).tail(8)   # 8 biggest effects
+    why['direction'] = ['towards' if e > 0 else 'away from' for e in why['effect']]
+
+    bar_chart = px.bar(why, x='effect', y='input', color='direction', orientation='h',
+                       title=f'What pushed the prediction towards or away from "{row["predicted"]}"')
+    st.plotly_chart(bar_chart)
 
 
-# =================================================================
-elif page == 'Model performance':
+# ---------------------------------------------------------------
+# Page 4: Model performance
+# ---------------------------------------------------------------
+def performance_page():
     st.title('How good are the predictions?')
-    st.write('Tested on 163,736 votes from 2010–2019. About 80% of votes are "yes", so accuracy alone is misleading: '
-             '**macro F1** gives "no" and "abstain" equal weight.')
+    st.write('Tested on 2010-2019 votes. About 80% of votes are "yes", so macro F1 is the main score.')
 
     st.subheader('Leaderboard')
-    st.dataframe(leaderboard, width='stretch', hide_index=True)
+    st.dataframe(leaderboard, hide_index=True)
 
-    left, right = st.columns(2)
-    with left:
-        st.subheader('XGBoost: confusion matrix')
-        fig = px.imshow(confusion.values, x=list(confusion.columns), y=list(confusion.index), text_auto=',',
-                        color_continuous_scale='Blues', labels=dict(x='Predicted', y='Actual', color='Votes'))
-        fig.update_layout(height=380)
-        st.plotly_chart(fig, width='stretch')
-    with right:
-        st.subheader('Swing flags: precision vs recall')
-        known = preds[preds['similar_my_vote'].notna()]
-        threshold = st.slider('Flag a country when its chance of change is above', 0.1, 0.9, 0.5, 0.05)
-        flagged = known['p_change'] > threshold
-        precision = known.loc[flagged, 'changed'].mean() if flagged.any() else 0
-        recall = flagged[known['changed']].mean()
-        a, b, c = st.columns(3)
-        a.metric('Countries flagged', f'{flagged.sum():,}')
-        b.metric('Precision', f'{precision:.0%}', help='Of the flagged countries, how many really changed their vote')
-        c.metric('Recall', f'{recall:.0%}', help='Of the countries that changed, how many were flagged')
-        st.caption(f"Only {known['changed'].mean():.0%} of votes change, so random flags would be right about that often.")
+    st.subheader('XGBoost confusion matrix (rows = actual, columns = predicted)')
+    st.dataframe(confusion)
+
+    st.subheader('Swing flags: precision vs recall')
+    threshold = st.slider('Flag a country when its chance of change is above', 0.1, 0.9, 0.5, 0.05)
+    known = preds[preds['similar_my_vote'].notna()]          # votes where we know the old vote
+    flagged = known[known['p_change'] > threshold]
+    changed = known[known['changed']]
+
+    precision = flagged['changed'].mean() if len(flagged) > 0 else 0
+    recall = (changed['p_change'] > threshold).mean()
+
+    col1, col2, col3 = st.columns(3)
+    col1.metric('Countries flagged', f'{len(flagged):,}')
+    col2.metric('Precision', f'{precision:.0%}', help='Of the flagged countries, how many really changed')
+    col3.metric('Recall', f'{recall:.0%}', help='Of the countries that changed, how many were flagged')
+
+
+# ---------------------------------------------------------------
+# Sidebar menu
+# ---------------------------------------------------------------
+st.sidebar.title('🗳️ UN Vote Forecaster')
+page = st.sidebar.radio('Go to', ['Voting blocs', 'Compare countries', 'Predict a resolution', 'Model performance'])
+st.sidebar.caption('Data: UN General Assembly votes, 1946-2019 (Voeten et al., via TidyTuesday).')
+
+if page == 'Voting blocs':
+    blocs_page()
+elif page == 'Compare countries':
+    compare_page()
+elif page == 'Predict a resolution':
+    predict_page()
+else:
+    performance_page()
