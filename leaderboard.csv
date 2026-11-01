@@ -1,0 +1,6 @@
+model,accuracy,macro_F1,recall_no,recall_abstain,recall_yes
+XGBoost,0.905,0.787,0.71,0.64,0.96
+Random Forest,0.909,0.785,0.67,0.56,0.98
+Baseline: repeat similar vote,0.902,0.783,0.7,0.64,0.96
+Logistic Regression,0.82,0.633,0.83,0.41,0.88
+Baseline: always yes,0.809,0.298,0.0,0.0,1.0
