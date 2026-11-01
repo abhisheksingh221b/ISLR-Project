@@ -10,7 +10,8 @@ from xgboost import XGBClassifier
 
 st.set_page_config(page_title='UN Vote Forecaster', page_icon='🗳️', layout='wide')
 
-DATA = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'app_data') + os.sep   # works from any folder
+# DATA = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'app_data') + os.sep 
+DATA = os.path.dirname(os.path.abspath(__file__)) + os.sep   # data files sit next to app.py# works from any folder
 VOTE_COLORS = {'yes': '#2e7d32', 'abstain': '#f9a825', 'no': '#c62828'}
 TOPIC_NAMES = {'co': 'Colonialism', 'di': 'Arms control and disarmament', 'ec': 'Economic development',
                'hr': 'Human rights', 'me': 'Palestinian conflict', 'nu': 'Nuclear weapons', 'other': 'No topic label'}
