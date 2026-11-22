@@ -1,5 +1,4 @@
-# UN Vote Forecaster - Streamlit dashboard
-# Run with:  streamlit run app.py
+
 
 import json
 from pathlib import Path
@@ -12,13 +11,13 @@ from xgboost import XGBClassifier
 
 st.set_page_config(page_title='UN Vote Forecaster', page_icon='🗳️', layout='wide')
 
-# The data files can sit next to app.py or inside an "app_data" folder
+
 FOLDER = Path(__file__).parent
 DATA = FOLDER / 'app_data' if (FOLDER / 'app_data').exists() else FOLDER
 
 VOTE_COLORS = {'yes': 'green', 'abstain': 'orange', 'no': 'red'}
 
-# Readable names for the model's inputs (used in the "why" chart)
+# Readable names for the model's inputs 
 NICE_NAMES = {
     'year': 'Year',
     'importantvote': 'Important vote',
@@ -47,9 +46,9 @@ NICE_NAMES = {
 }
 
 
-# ---------------------------------------------------------------
-# Load everything once (Streamlit remembers it between clicks)
-# ---------------------------------------------------------------
+
+# Load everything 
+
 @st.cache_data
 def load_data():
     blocs = pd.read_csv(DATA / 'blocs.csv')
@@ -74,9 +73,9 @@ def load_model():
 blocs, votes, preds, resolutions, leaderboard, confusion, features = load_data()
 
 
-# ---------------------------------------------------------------
+
 # Page 1: Voting blocs
-# ---------------------------------------------------------------
+
 def blocs_page():
     st.title('Voting blocs at the UN')
     st.write('Countries grouped by how they vote (PCA + K-Means, 3 groups per decade).')
@@ -99,9 +98,9 @@ def blocs_page():
             st.write(', '.join(members))
 
 
-# ---------------------------------------------------------------
+
 # Page 2: Compare countries
-# ---------------------------------------------------------------
+
 def agreement_by_year(country_a, country_b):
     """Percent of votes where the two countries voted the same way, for each year."""
     a = votes[votes['country'] == country_a]
@@ -141,9 +140,9 @@ def compare_page():
     st.dataframe(table.pivot_table(index='with', columns='decade', values='agreement').round(0))
 
 
-# ---------------------------------------------------------------
+
 # Page 3: Predict a resolution
-# ---------------------------------------------------------------
+
 def predict_page():
     st.title('Predict how countries vote on a resolution')
     st.write('The model learned from 1980-2009 and never saw these 2010-2019 votes.')
@@ -203,9 +202,8 @@ def explain_one_country(r):
     st.plotly_chart(bar_chart)
 
 
-# ---------------------------------------------------------------
 # Page 4: Model performance
-# ---------------------------------------------------------------
+
 def performance_page():
     st.title('How good are the predictions?')
     st.write('Tested on 2010-2019 votes. About 80% of votes are "yes", so macro F1 is the main score.')
@@ -231,12 +229,12 @@ def performance_page():
     col3.metric('Recall', f'{recall:.0%}', help='Of the countries that changed, how many were flagged')
 
 
-# ---------------------------------------------------------------
+
 # Sidebar menu
-# ---------------------------------------------------------------
+
 st.sidebar.title('🗳️ UN Vote Forecaster')
 page = st.sidebar.radio('Go to', ['Voting blocs', 'Compare countries', 'Predict a resolution', 'Model performance'])
-st.sidebar.caption('Data: UN General Assembly votes, 1946-2019 (Voeten et al., via TidyTuesday).')
+st.sidebar.caption('Data: UN General Assembly votes, 1946-2019.')
 
 if page == 'Voting blocs':
     blocs_page()
